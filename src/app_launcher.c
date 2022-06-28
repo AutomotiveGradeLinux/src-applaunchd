@@ -18,18 +18,26 @@
 
 #include "app_info.h"
 #include "app_launcher.h"
-#include "dbus_activation_manager.h"
 #include "process_manager.h"
+#include "systemd_manager.h"
 #include "utils.h"
 
 typedef struct _AppLauncher {
     applaunchdAppLaunchSkeleton parent;
 
-    DBusActivationManager *dbus_manager;
+/* TODO: try to move event and bus properties down to systemd_manager */
+    sd_event *event;
+    sd_bus *bus;
+
     ProcessManager *process_manager;
+    SystemdManager *systemd_manager;
 
     GList *apps_list;
 } AppLauncher;
+
+extern GMainLoop *main_loop;
+
+extern GSource *g_sd_event_create_source(sd_event *event, sd_bus *bus);
 
 static void app_launcher_iface_init(applaunchdAppLaunchIface *iface);
 
@@ -70,7 +78,7 @@ static void app_launcher_update_applications_list(AppLauncher *self)
         g_autofree const gchar *app_id = NULL;
         g_autofree const gchar *icon_path = NULL;
         AppInfo *app_info = NULL;
-        gboolean dbus_activated, graphical;
+        gboolean systemd_activated, graphical;
 
         if (!desktop_info) {
             g_warning("Unable to find .desktop file for application '%s'", desktop_id);
@@ -109,13 +117,14 @@ static void app_launcher_update_applications_list(AppLauncher *self)
          * An application can be D-Bus activated if one of those conditions are met:
          *   - its .desktop file contains a "DBusActivatable=true" line
          *   - it provides a corresponding D-Bus service file
+         * HACK: Use "DBusActivatable=true" in .desktop to mark systemd-based service
          */
 
         /* Default to non-DBus-activatable */
-        dbus_activated = FALSE;
+        systemd_activated = FALSE;
         if (g_desktop_app_info_get_boolean(desktop_info,
                                            G_KEY_FILE_DESKTOP_KEY_DBUS_ACTIVATABLE)) {
-            dbus_activated = TRUE;
+            systemd_activated = TRUE;
         } else if (dirlist) {
             const gchar *desktop_filename = g_desktop_app_info_get_filename(desktop_info);
             g_autofree gchar *service_file = g_strconcat(app_id, ".service", NULL);
@@ -130,7 +139,7 @@ static void app_launcher_update_applications_list(AppLauncher *self)
                 service_path = g_build_filename(*xdg_data_dir, "dbus-1", "services",
                                                 service_file, NULL);
                 if (g_file_test(service_path, G_FILE_TEST_EXISTS)) {
-                    dbus_activated = TRUE;
+                    systemd_activated = TRUE;
                     break;
                 }
             }
@@ -149,8 +158,8 @@ static void app_launcher_update_applications_list(AppLauncher *self)
 
         app_info = app_info_new(app_id, g_app_info_get_name(appinfo),
                                 icon_path ? icon_path : "",
-                                dbus_activated ? "" : g_app_info_get_commandline(appinfo),
-                                dbus_activated, graphical);
+                                g_app_info_get_commandline(appinfo),
+                                systemd_activated, graphical);
 
         g_debug("Adding application '%s'", app_id);
 
@@ -217,13 +226,11 @@ static gboolean app_launcher_start_app(AppLauncher *self, AppInfo *app_info)
         * and notify subscribers it should be activated/brought to the
         * foreground
         */
-        if (app_info_get_dbus_activated(app_info))
-            dbus_activation_manager_activate_app(self->dbus_manager, app_info);
         app_launcher_started_cb(self, app_id, NULL);
         return TRUE;
     case APP_STATUS_INACTIVE:
-        if (app_info_get_dbus_activated(app_info))
-            dbus_activation_manager_start_app(self->dbus_manager, app_info);
+        if (app_info_get_systemd_activated(app_info))
+            systemd_manager_start_app(self->systemd_manager, app_info);
         else
             process_manager_start_app(self->process_manager, app_info);
         return TRUE;
@@ -336,8 +343,8 @@ static void app_launcher_dispose(GObject *object)
     if (self->apps_list)
         g_list_free_full(g_steal_pointer(&self->apps_list), g_object_unref);
 
-    g_clear_object(&self->dbus_manager);
     g_clear_object(&self->process_manager);
+    g_clear_object(&self->systemd_manager);
 
     G_OBJECT_CLASS(app_launcher_parent_class)->dispose(object);
 }
@@ -362,6 +369,11 @@ static void app_launcher_iface_init(applaunchdAppLaunchIface *iface)
 
 static void app_launcher_init (AppLauncher *self)
 {
+    sd_bus_open_system(&self->bus);
+    sd_event_default(&self->event);
+    sd_bus_attach_event(self->bus, self->event, SD_EVENT_PRIORITY_NORMAL);
+    g_source_attach(g_sd_event_create_source(self->event, self->bus), g_main_loop_get_context(main_loop));
+
     /*
      * Create the process manager and connect to its signals
      * so we get notified on app startup/termination
@@ -374,14 +386,14 @@ static void app_launcher_init (AppLauncher *self)
                              G_CALLBACK(app_launcher_terminated_cb), self);
 
     /*
-     * Create the D-Bus activation manager and connect to its signals
+     * Create the systemd manager and connect to its signals
      * so we get notified on app startup/termination
      */
-    self->dbus_manager = g_object_new(APPLAUNCHD_TYPE_DBUS_ACTIVATION_MANAGER,
-                                      NULL);
-    g_signal_connect_swapped(self->dbus_manager, "started",
+    self->systemd_manager = g_object_new(APPLAUNCHD_TYPE_SYSTEMD_MANAGER,
+                                         NULL);
+    g_signal_connect_swapped(self->systemd_manager, "started",
                              G_CALLBACK(app_launcher_started_cb), self);
-    g_signal_connect_swapped(self->dbus_manager, "terminated",
+    g_signal_connect_swapped(self->systemd_manager, "terminated",
                              G_CALLBACK(app_launcher_terminated_cb), self);
 
     /* Initialize the applications list */
@@ -429,4 +441,14 @@ AppInfo *app_launcher_get_app_info(AppLauncher *self, const gchar *app_id)
     g_warning("Unable to find application with ID '%s'", app_id);
 
     return NULL;
+}
+
+sd_bus *app_launcher_get_bus(AppLauncher *self)
+{
+    return self->bus;
+}
+
+sd_event *app_launcher_get_event(AppLauncher *self)
+{
+    return self->event;
 }
