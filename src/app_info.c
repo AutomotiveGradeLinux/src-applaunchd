@@ -17,7 +17,6 @@
 #include <gio/gio.h>
 
 #include "app_info.h"
-#include "dbus_activation_manager.h"
 
 struct _AppInfo {
     GObject parent_instance;
@@ -26,14 +25,14 @@ struct _AppInfo {
     gchar *name;
     gchar *icon_path;
     gchar *command;
-    gboolean dbus_activated;
+    gboolean systemd_activated;
     gboolean graphical;
 
     AppStatus status;
 
     /*
      * `runtime_data` is an opaque pointer depending on the app startup method.
-     * It is set in by ProcessManager or DBusActivationManager.
+     * It is set in by ProcessManager or SystemdManager.
      */
     gpointer runtime_data;
 };
@@ -52,13 +51,7 @@ static void app_info_dispose(GObject *object)
     g_clear_pointer(&self->name, g_free);
     g_clear_pointer(&self->icon_path, g_free);
     g_clear_pointer(&self->app_id, g_free);
-
-    if (self->dbus_activated) {
-        g_clear_pointer(&self->runtime_data,
-                        dbus_activation_manager_free_runtime_data);
-    } else {
-        g_clear_pointer(&self->runtime_data, g_free);
-    }
+    g_clear_pointer(&self->runtime_data, g_free);
 
     G_OBJECT_CLASS(app_info_parent_class)->dispose(object);
 }
@@ -86,7 +79,8 @@ static void app_info_init(AppInfo *self)
 
 AppInfo *app_info_new(const gchar *app_id, const gchar *name,
                       const gchar *icon_path, const gchar *command,
-                      gboolean dbus_activated, gboolean graphical)
+                      gboolean systemd_activated,
+                      gboolean graphical)
 {
     AppInfo *self = g_object_new(APPLAUNCHD_TYPE_APP_INFO, NULL);
 
@@ -94,7 +88,7 @@ AppInfo *app_info_new(const gchar *app_id, const gchar *name,
     self->name = g_strdup(name);
     self->icon_path = g_strdup(icon_path);
     self->command = g_strdup(command);
-    self->dbus_activated = dbus_activated;
+    self->systemd_activated = systemd_activated;
     self->graphical = graphical;
 
     return self;
@@ -128,11 +122,11 @@ const gchar *app_info_get_command(AppInfo *self)
     return self->command;
 }
 
-gboolean app_info_get_dbus_activated(AppInfo *self)
+gboolean app_info_get_systemd_activated(AppInfo *self)
 {
     g_return_val_if_fail(APPLAUNCHD_IS_APP_INFO(self), FALSE);
 
-    return self->dbus_activated;
+    return self->systemd_activated;
 }
 
 gboolean app_info_get_graphical(AppInfo *self)
