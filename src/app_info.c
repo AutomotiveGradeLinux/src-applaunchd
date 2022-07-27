@@ -24,9 +24,7 @@ struct _AppInfo {
     gchar *app_id;
     gchar *name;
     gchar *icon_path;
-    gchar *command;
-    gboolean systemd_activated;
-    gboolean graphical;
+    gchar *service;
 
     AppStatus status;
 
@@ -50,7 +48,7 @@ static void app_info_dispose(GObject *object)
     g_clear_pointer(&self->app_id, g_free);
     g_clear_pointer(&self->name, g_free);
     g_clear_pointer(&self->icon_path, g_free);
-    g_clear_pointer(&self->app_id, g_free);
+    g_clear_pointer(&self->service, g_free);
     g_clear_pointer(&self->runtime_data, g_free);
 
     G_OBJECT_CLASS(app_info_parent_class)->dispose(object);
@@ -78,18 +76,14 @@ static void app_info_init(AppInfo *self)
  */
 
 AppInfo *app_info_new(const gchar *app_id, const gchar *name,
-                      const gchar *icon_path, const gchar *command,
-                      gboolean systemd_activated,
-                      gboolean graphical)
+                      const gchar *icon_path, const gchar *service)
 {
     AppInfo *self = g_object_new(APPLAUNCHD_TYPE_APP_INFO, NULL);
 
     self->app_id = g_strdup(app_id);
     self->name = g_strdup(name);
     self->icon_path = g_strdup(icon_path);
-    self->command = g_strdup(command);
-    self->systemd_activated = systemd_activated;
-    self->graphical = graphical;
+    self->service = g_strdup(service);
 
     return self;
 }
@@ -115,25 +109,11 @@ const gchar *app_info_get_icon_path(AppInfo *self)
     return self->icon_path;
 }
 
-const gchar *app_info_get_command(AppInfo *self)
+const gchar *app_info_get_service(AppInfo *self)
 {
     g_return_val_if_fail(APPLAUNCHD_IS_APP_INFO(self), NULL);
 
-    return self->command;
-}
-
-gboolean app_info_get_systemd_activated(AppInfo *self)
-{
-    g_return_val_if_fail(APPLAUNCHD_IS_APP_INFO(self), FALSE);
-
-    return self->systemd_activated;
-}
-
-gboolean app_info_get_graphical(AppInfo *self)
-{
-    g_return_val_if_fail(APPLAUNCHD_IS_APP_INFO(self), FALSE);
-
-    return self->graphical;
+    return self->service;
 }
 
 AppStatus app_info_get_status(AppInfo *self)

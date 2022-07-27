@@ -13,9 +13,9 @@ This interface can be used to:
 For more details about the D-Bus interface, please refer to the file
 `data/org.automotivelinux.AppLaunch.xml`.
 
-Applications can be started either through D-Bus activation (using their D-Bus
-name) or by specifying a command line to be executed, and are monitored until
-they exit. Please note `applaunchd` allows only one instance of a given
+Applications are enumerated from systemd's list of available units based on
+the pattern agl-app*@*.service, and are started and controled using their
+systemd unit.  Please note `applaunchd` allows only one instance of a given
 application.
 
 AGL repo for source code:

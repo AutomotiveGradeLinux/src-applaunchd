@@ -14,11 +14,8 @@
  * limitations under the License.
  */
 
-#include <gio/gdesktopappinfo.h>
-
 #include "app_info.h"
 #include "app_launcher.h"
-#include "process_manager.h"
 #include "systemd_manager.h"
 #include "utils.h"
 
@@ -29,7 +26,6 @@ typedef struct _AppLauncher {
     sd_event *event;
     sd_bus *bus;
 
-    ProcessManager *process_manager;
     SystemdManager *systemd_manager;
 
     GList *apps_list;
@@ -57,114 +53,87 @@ static void app_launcher_started_cb(AppLauncher *self,
 /*
  * This function is executed during the object initialization. It goes through
  * all available applications on the system and creates a static list
- * containing all the relevant info (ID, name, command, icon...) for further
+ * containing all the relevant info (ID, name, unit, icon...) for further
  * processing.
  */
 static void app_launcher_update_applications_list(AppLauncher *self)
 {
-    g_autoptr(GList) app_list = g_app_info_get_all();
     g_auto(GStrv) dirlist = NULL;
-    guint len = g_list_length(app_list);
 
     char *xdg_data_dirs = getenv("XDG_DATA_DIRS");
     if (xdg_data_dirs)
         dirlist = g_strsplit(getenv("XDG_DATA_DIRS"), ":", -1);
 
-    for (guint i = 0; i < len; i++) {
-        GAppInfo *appinfo = g_list_nth_data(app_list, i);
-        const gchar *desktop_id = g_app_info_get_id(appinfo);
-        GIcon *icon = g_app_info_get_icon(appinfo);
-        g_autoptr(GDesktopAppInfo) desktop_info = g_desktop_app_info_new(desktop_id);
+    GList *units = NULL;
+    if (!systemd_manager_enumerate_app_units(self->systemd_manager, self, &units)) {
+        return;
+    }
+
+    GList *iterator;
+    for (iterator = units; iterator != NULL; iterator = iterator->next) {
         g_autofree const gchar *app_id = NULL;
         g_autofree const gchar *icon_path = NULL;
         AppInfo *app_info = NULL;
-        gboolean systemd_activated, graphical;
 
-        if (!desktop_info) {
-            g_warning("Unable to find .desktop file for application '%s'", desktop_id);
+        if (!iterator->data)
+            continue;
+
+        // Parse service and app id out of unit filename
+        gchar *service = g_strrstr(iterator->data, "/");
+        if (!service)
+            service = iterator->data;
+        else
+            service += 1;
+
+        g_autofree char *tmp = g_strdup(service);
+        char *end = tmp + strlen(tmp);
+        while (end > tmp && *end != '.') {
+            --end;
+        }
+        if (end > tmp) {
+            *end = '\0';
+        } else {
+            g_free(tmp);
             continue;
         }
-
-        /* Check the application should be part of the apps list */
-        if (!g_app_info_should_show(appinfo)) {
-            g_debug("Application '%s' shouldn't be shown, skipping...", desktop_id);
-            continue;
+        while (end > tmp && *end != '@') {
+            --end;
         }
-
-        if (g_desktop_app_info_get_is_hidden(desktop_info)) {
-            g_debug("Application '%s' is hidden, skipping...", desktop_id);
-            continue;
+        if (end > tmp) {
+            app_id = g_strdup(end + 1);
         }
-        if (g_desktop_app_info_get_nodisplay(desktop_info)) {
-            g_debug("Application '%s' has NoDisplay set, skipping...", desktop_id);
-            continue;
+        // Potentially handle non-template agl-app-foo.service units here
+
+        // Try getting display name from unit Description property
+        char *name = NULL;
+        if (!systemd_manager_get_app_description(self->systemd_manager,
+                                                 self,
+                                                 service,
+                                                 &name) ||
+            name == NULL) {
+
+            // Fall back to the application ID
+            g_warning("Could not retrieve Description of '%s'", service);
+            name = app_id;
         }
-
-        /*
-         * The application ID is usually the .desktop file name. However, a common practice
-         * is that .desktop files are named after the executable name, in which case the
-         * "StartupWMClass" property indicates the wayland app-id.
-         */
-        app_id = g_strdup(g_desktop_app_info_get_startup_wm_class(desktop_info));
-        if (!app_id) {
-            app_id = g_strdup(desktop_id);
-            gchar *extension = g_strrstr(app_id, ".desktop");
-            if (extension)
-                *extension = 0;
-        }
-
-        /*
-         * An application can be D-Bus activated if one of those conditions are met:
-         *   - its .desktop file contains a "DBusActivatable=true" line
-         *   - it provides a corresponding D-Bus service file
-         * HACK: Use "DBusActivatable=true" in .desktop to mark systemd-based service
-         */
-
-        /* Default to non-DBus-activatable */
-        systemd_activated = FALSE;
-        if (g_desktop_app_info_get_boolean(desktop_info,
-                                           G_KEY_FILE_DESKTOP_KEY_DBUS_ACTIVATABLE)) {
-            systemd_activated = TRUE;
-        } else if (dirlist) {
-            const gchar *desktop_filename = g_desktop_app_info_get_filename(desktop_info);
-            g_autofree gchar *service_file = g_strconcat(app_id, ".service", NULL);
-
-            for (GStrv xdg_data_dir = dirlist; *xdg_data_dir != NULL ; xdg_data_dir++) {
-                g_autofree gchar *service_path = NULL;
-
-                /* Search only in the XDG_DATA_DIR where the .desktop file is located */
-                if (!g_str_has_prefix(desktop_filename, *xdg_data_dir))
-                    continue;
-
-                service_path = g_build_filename(*xdg_data_dir, "dbus-1", "services",
-                                                service_file, NULL);
-                if (g_file_test(service_path, G_FILE_TEST_EXISTS)) {
-                    systemd_activated = TRUE;
-                    break;
-                }
-            }
-        }
-
-        /* Applications with "Terminal=True" are not graphical apps */
-        graphical = !g_desktop_app_info_get_boolean(desktop_info,
-                                                    G_KEY_FILE_DESKTOP_KEY_TERMINAL);
 
         /*
          * GAppInfo retrieves the icon data but doesn't provide a way to retrieve
          * the corresponding file name, so we have to look it up by ourselves.
          */
-        if (icon && dirlist)
-            icon_path = applaunchd_utils_get_icon(dirlist, g_icon_to_string(icon));
+        if (app_id && dirlist)
+            icon_path = applaunchd_utils_get_icon(dirlist, app_id);
 
-        app_info = app_info_new(app_id, g_app_info_get_name(appinfo),
+        app_info = app_info_new(app_id,
+                                name,
                                 icon_path ? icon_path : "",
-                                g_app_info_get_commandline(appinfo),
-                                systemd_activated, graphical);
+                                service);
 
-        g_debug("Adding application '%s'", app_id);
+        g_debug("Adding application '%s' with display name '%s'", app_id, name);
 
         self->apps_list = g_list_append(self->apps_list, app_info);
     }
+    g_list_free_full(units, g_free);
 }
 
 /*
@@ -185,9 +154,6 @@ static GVariant *app_launcher_get_list_variant(AppLauncher *self, gboolean graph
     for (guint i = 0; i < len; i++) {
         GVariantBuilder app_builder;
         AppInfo *app_info = g_list_nth_data(self->apps_list, i);
-
-        if (graphical && !app_info_get_graphical(app_info))
-            continue;
 
         g_variant_builder_init (&app_builder, G_VARIANT_TYPE("(sss)"));
 
@@ -229,10 +195,7 @@ static gboolean app_launcher_start_app(AppLauncher *self, AppInfo *app_info)
         app_launcher_started_cb(self, app_id, NULL);
         return TRUE;
     case APP_STATUS_INACTIVE:
-        if (app_info_get_systemd_activated(app_info))
-            systemd_manager_start_app(self->systemd_manager, app_info);
-        else
-            process_manager_start_app(self->process_manager, app_info);
+        systemd_manager_start_app(self->systemd_manager, app_info);
         return TRUE;
     default:
         g_critical("Unknown status %d for application '%s'", app_status, app_id);
@@ -257,7 +220,7 @@ static gboolean app_launcher_handle_start(applaunchdAppLaunch *object,
     AppLauncher *self = APPLAUNCHD_APP_LAUNCHER(object);
     g_return_val_if_fail(APPLAUNCHD_IS_APP_LAUNCHER(self), FALSE);
 
-    /* Seach the apps list for the given app-id */
+    /* Search the apps list for the given app-id */
     app = app_launcher_get_app_info(self, app_id);
     if (!app) {
         g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
@@ -343,7 +306,6 @@ static void app_launcher_dispose(GObject *object)
     if (self->apps_list)
         g_list_free_full(g_steal_pointer(&self->apps_list), g_object_unref);
 
-    g_clear_object(&self->process_manager);
     g_clear_object(&self->systemd_manager);
 
     G_OBJECT_CLASS(app_launcher_parent_class)->dispose(object);
@@ -373,17 +335,6 @@ static void app_launcher_init (AppLauncher *self)
     sd_event_default(&self->event);
     sd_bus_attach_event(self->bus, self->event, SD_EVENT_PRIORITY_NORMAL);
     g_source_attach(g_sd_event_create_source(self->event, self->bus), g_main_loop_get_context(main_loop));
-
-    /*
-     * Create the process manager and connect to its signals
-     * so we get notified on app startup/termination
-     */
-    self->process_manager = g_object_new(APPLAUNCHD_TYPE_PROCESS_MANAGER,
-                                         NULL);
-    g_signal_connect_swapped(self->process_manager, "started",
-                             G_CALLBACK(app_launcher_started_cb), self);
-    g_signal_connect_swapped(self->process_manager, "terminated",
-                             G_CALLBACK(app_launcher_terminated_cb), self);
 
     /*
      * Create the systemd manager and connect to its signals

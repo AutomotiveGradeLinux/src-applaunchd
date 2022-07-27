@@ -20,6 +20,7 @@
 #include <glib-object.h>
 
 #include "app_info.h"
+#include "app_launcher.h"
 
 G_BEGIN_DECLS
 
@@ -29,6 +30,15 @@ G_DECLARE_FINAL_TYPE(SystemdManager, systemd_manager,
                      APPLAUNCHD, SYSTEMD_MANAGER, GObject);
 
 SystemdManager *systemd_manager_new(void);
+
+gboolean systemd_manager_enumerate_app_units(SystemdManager *self,
+                                             AppLauncher *launcher,
+                                             GList **units);
+
+gboolean systemd_manager_get_app_description(SystemdManager *self,
+					     AppLauncher *launcher,
+					     gchar *service,
+					     gchar **description);
 
 gboolean systemd_manager_start_app(SystemdManager *self,
                                    AppInfo *app_info);

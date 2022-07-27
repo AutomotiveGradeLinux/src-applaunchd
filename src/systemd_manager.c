@@ -147,7 +147,119 @@ SystemdManager *systemd_manager_new(void)
 }
 
 /*
- * Start an application by executing the provided command line.
+ * Get app unit list
+ */
+gboolean systemd_manager_enumerate_app_units(SystemdManager *self,
+                                   AppLauncher *launcher,
+                                   GList **units)
+{
+    g_return_val_if_fail(APPLAUNCHD_IS_SYSTEMD_MANAGER(self), FALSE);
+    g_return_val_if_fail(APPLAUNCHD_IS_APP_LAUNCHER(launcher), FALSE);
+    g_return_val_if_fail(units != NULL, FALSE);
+
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *m = NULL;
+    const char *path;
+    int r;
+
+    r = sd_bus_call_method(
+            app_launcher_get_bus(launcher),       /* bus */
+            "org.freedesktop.systemd1",           /* service to contact */
+            "/org/freedesktop/systemd1",          /* object path */
+            "org.freedesktop.systemd1.Manager",   /* interface name */
+            "ListUnitFilesByPatterns",            /* method name */
+            &error,                               /* object to return error in */
+            &m,                                   /* return message on success */
+            "asas",                               /* input signature */
+            0,                                    /* first argument (empty array) */
+            1,                                    /* second argument (array) */
+            "agl-app*@*.service"
+    );
+    if (r < 0) {
+        g_critical("Failed to issue method call: %s", error.message);
+        goto finish;
+    }
+
+    r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "(ss)");
+    if (r < 0) {
+        g_critical("Failed to parse response message: %s", strerror(-r));
+        goto finish;
+    }
+
+    const char *unit;
+    const char *state;
+    while ((r = sd_bus_message_read(m, "(ss)", &unit, &state)) > 0) {
+        if (!g_str_has_suffix(unit, "@.service"))
+            *units = g_list_prepend(*units, g_strdup(unit));
+    }
+    if (r < 0) {
+        g_critical("Failed to parse unit entry: %s", strerror(-r));
+        goto finish;
+    }
+
+    // Exit array
+    r = sd_bus_message_exit_container(m);
+    if (r < 0) {
+        g_critical("Failed to parse response message 5: %s", strerror(-r));
+        goto finish;
+    }
+
+    return TRUE;
+
+finish:
+    sd_bus_error_free(&error);
+    sd_bus_message_unref(m);
+    g_list_free_full(*units, g_free);
+    *units = NULL;
+    return FALSE;
+}
+
+/*
+ * Get app unit description property
+ */
+gboolean systemd_manager_get_app_description(SystemdManager *self,
+                                             AppLauncher *launcher,
+                                             gchar *service,
+                                             gchar **description)
+{
+    g_return_val_if_fail(APPLAUNCHD_IS_SYSTEMD_MANAGER(self), FALSE);
+    g_return_val_if_fail(APPLAUNCHD_IS_APP_LAUNCHER(launcher), FALSE);
+    g_return_val_if_fail(service != NULL, FALSE);
+    g_return_val_if_fail(description != NULL, FALSE);
+
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *m = NULL;
+    gchar *esc_service = NULL;
+    const char *path;
+    int r;
+
+    /* Get the escaped unit name in the systemd hierarchy */
+    sd_bus_path_encode("/org/freedesktop/systemd1/unit", service, &esc_service);
+
+    r = sd_bus_get_property_string(
+            app_launcher_get_bus(launcher),       /* bus */
+            "org.freedesktop.systemd1",           /* service to contact */
+            esc_service,                          /* object path */
+            "org.freedesktop.systemd1.Unit",
+            "Description",
+            &error,
+            description);
+    if (r < 0) {
+        g_critical("Failed to issue method call: %s", error.message);
+        goto finish;
+    }
+    return TRUE;
+
+finish:
+    sd_bus_error_free(&error);
+    sd_bus_message_unref(m);
+    g_free(*description);
+    *description = NULL;
+    return FALSE;
+}
+
+/*
+ * Start an application by executing its service.
  */
 gboolean systemd_manager_start_app(SystemdManager *self,
                                    AppInfo *app_info)
@@ -156,10 +268,9 @@ gboolean systemd_manager_start_app(SystemdManager *self,
     g_return_val_if_fail(APPLAUNCHD_IS_APP_INFO(app_info), FALSE);
 
     AppLauncher *launcher = app_launcher_get_default();
-    g_autofree gchar *service = NULL;
     gchar *esc_service = NULL;
     const gchar *app_id = app_info_get_app_id(app_info);
-    const gchar *command = app_info_get_command(app_info);
+    const gchar *service = app_info_get_service(app_info);
     struct systemd_runtime_data *runtime_data;
 
     sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -173,10 +284,9 @@ gboolean systemd_manager_start_app(SystemdManager *self,
         return FALSE;
     }
 
-    /* Compose the corresponding service name */
-    service = g_strdup_printf("agl-app@%s.service", command);
     /* Get the escaped unit name in the systemd hierarchy */
     sd_bus_path_encode("/org/freedesktop/systemd1/unit", service, &esc_service);
+    g_debug("Trying to start service '%s', unit path '%s'", service, esc_service);
 
     runtime_data->mgr = self;
     runtime_data->esc_service = esc_service;
