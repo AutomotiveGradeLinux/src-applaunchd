@@ -30,6 +30,11 @@
       <arg name="appid" type="s" direction="in"/>
     </method>
 
+    <method name="split">
+      <arg name="appid" type="s" direction="in"/>
+      <arg name="orientation" type="u" direction="in"/>
+    </method>
+
     <!--
         listApplications:
         @graphical: Whether the should should be limited to graphical
@@ -70,5 +75,11 @@
     <signal name="terminated">
       <arg name="appid" type="s"/>
     </signal>
+
+    <signal name="splited">
+      <arg name="appid" type="s"/>
+      <arg name="orientation" type="u"/>
+    </signal>
+
   </interface>
 </node>

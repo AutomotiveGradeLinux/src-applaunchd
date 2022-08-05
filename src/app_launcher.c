@@ -46,6 +46,8 @@ static void app_launcher_started_cb(AppLauncher *self,
                                     const gchar *app_id,
                                     gpointer caller);
 
+static void app_launcher_splited_app_cb(AppLauncher *self, const gchar *app_id,
+					uint32_t orientation, gpointer caller);
 /*
  * Internal functions
  */
@@ -205,6 +207,21 @@ static gboolean app_launcher_start_app(AppLauncher *self, AppInfo *app_info)
     return FALSE;
 }
 
+static gboolean app_launcher_split_app(AppLauncher *self, AppInfo *app_info,
+				       uint32_t orientation)
+{
+    g_return_val_if_fail(APPLAUNCHD_IS_APP_LAUNCHER(self), FALSE);
+    g_return_val_if_fail(APPLAUNCHD_IS_APP_INFO(app_info), FALSE);
+
+    AppStatus app_status = app_info_get_status(app_info);
+    const gchar *app_id = app_info_get_app_id(app_info);
+
+    fprintf(stderr, "%s() for app_id %s, orientation %d\n", __func__, app_id, orientation);
+    app_launcher_splited_app_cb(self, app_id, orientation, NULL);
+
+    return FALSE;
+}
+
 /*
  * Internal callbacks
  */
@@ -232,6 +249,31 @@ static gboolean app_launcher_handle_start(applaunchdAppLaunch *object,
 
     app_launcher_start_app(self, app);
     applaunchd_app_launch_complete_start(object, invocation);
+
+    return TRUE;
+}
+
+static gboolean app_launcher_handle_split(applaunchdAppLaunch *object,
+                                          GDBusMethodInvocation *invocation,
+                                          const gchar *app_id, uint32_t orientation)
+{
+    AppInfo *app;
+    AppLauncher *self = APPLAUNCHD_APP_LAUNCHER(object);
+    g_return_val_if_fail(APPLAUNCHD_IS_APP_LAUNCHER(self), FALSE);
+
+    /* Search the apps list for the given app-id */
+    app = app_launcher_get_app_info(self, app_id);
+    if (!app) {
+        g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+                                              G_DBUS_ERROR_INVALID_ARGS,
+                                              "Unknown application '%s'",
+                                              app_id);
+        return FALSE;
+    }
+
+    fprintf(stderr, "%s() with app_id %s orientation %d\n", __func__, app_id, orientation);
+    app_launcher_split_app(self, app, orientation);
+    applaunchd_app_launch_complete_split(object, invocation);
 
     return TRUE;
 }
@@ -295,6 +337,20 @@ static void app_launcher_terminated_cb(AppLauncher *self,
     applaunchd_app_launch_emit_terminated(iface, app_id);
 }
 
+static void app_launcher_splited_app_cb(AppLauncher *self,
+                                  const gchar *app_id,
+				  uint32_t orientation,
+                                  gpointer caller)
+{
+    applaunchdAppLaunch *iface = APPLAUNCHD_APP_LAUNCH(self);
+    g_return_if_fail(APPLAUNCHD_IS_APP_LAUNCH(iface));
+
+    g_debug("Application '%s' split, orientation %d", app_id, orientation);
+    fprintf(stderr, "%s() Application '%s' split, orientation %d\n",
+		    __func__, app_id, orientation);
+    applaunchd_app_launch_emit_splited(iface, app_id, orientation);
+}
+
 /*
  * Initialization & cleanup functions
  */
@@ -326,6 +382,7 @@ static void app_launcher_class_init(AppLauncherClass *klass)
 static void app_launcher_iface_init(applaunchdAppLaunchIface *iface)
 {
     iface->handle_start = app_launcher_handle_start;
+    iface->handle_split = app_launcher_handle_split;
     iface->handle_list_applications = app_launcher_handle_list_applications;
 }
 
@@ -346,6 +403,8 @@ static void app_launcher_init (AppLauncher *self)
                              G_CALLBACK(app_launcher_started_cb), self);
     g_signal_connect_swapped(self->systemd_manager, "terminated",
                              G_CALLBACK(app_launcher_terminated_cb), self);
+    g_signal_connect_swapped(self->systemd_manager, "splited",
+                             G_CALLBACK(app_launcher_splited_app_cb), self);
 
     /* Initialize the applications list */
     app_launcher_update_applications_list(self);
