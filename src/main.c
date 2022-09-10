@@ -1,17 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
 /*
  * Copyright (C) 2021 Collabora Ltd
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright (C) 2022 Konsulko Group
  */
 
 #include <glib.h>
@@ -24,15 +14,6 @@
 
 #define APPLAUNCH_DBUS_NAME "org.automotivelinux.AppLaunch"
 #define APPLAUNCH_DBUS_PATH "/org/automotivelinux/AppLaunch"
-
-/* TODO: see if it makes sense to move systemd event handling specifics
-   and interacting with GLib main loop into systemd_manager.c */
-typedef struct SDEventSource {
-    GSource source;
-    GPollFD pollfd;
-    sd_event *event;
-    sd_bus *bus;
-} SDEventSource;
 
 GMainLoop *main_loop = NULL;
 
@@ -69,45 +50,6 @@ static void name_lost_cb(GDBusConnection *connection, const gchar *name,
 {
     g_critical("Lost the '%s' service name, quitting...", name);
     g_main_loop_quit(main_loop);
-}
-
-static gboolean event_prepare(GSource *source, gint *timeout_) {
-    return sd_event_prepare(((SDEventSource *)source)->event) > 0;
-}
-
-static gboolean event_check(GSource *source) {
-    return sd_event_wait(((SDEventSource *)source)->event, 0) > 0;
-}
-
-static gboolean event_dispatch(GSource *source, GSourceFunc callback, gpointer user_data) {
-    return sd_event_dispatch(((SDEventSource *)source)->event) > 0;
-}
-
-static void event_finalize(GSource *source) {
-    sd_event_unref(((SDEventSource *)source)->event);
-}
-
-static GSourceFuncs event_funcs = {
-    .prepare = event_prepare,
-    .check = event_check,
-    .dispatch = event_dispatch,
-    .finalize = event_finalize,
-};
-
-GSource *g_sd_event_create_source(sd_event *event, sd_bus *bus)
-{
-    SDEventSource *source;
-
-    source = (SDEventSource *)g_source_new(&event_funcs, sizeof(SDEventSource));
-
-    source->event = sd_event_ref(event);
-    source->bus = sd_bus_ref(bus);
-    source->pollfd.fd = sd_bus_get_fd(bus);
-    source->pollfd.events = sd_bus_get_events(bus);
-
-    g_source_add_poll((GSource *)source, &source->pollfd);
-
-    return (GSource *)source;
 }
 
 int main(int argc, char *argv[])

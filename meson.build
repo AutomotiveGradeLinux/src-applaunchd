@@ -16,7 +16,7 @@
 
 project (
   'applaunchd',
-  'c',
+  ['c', 'cpp'],
   version : '0.1.0',
   license : 'Apache-2.0',
   meson_version : '>= 0.46.0',
@@ -24,7 +24,8 @@ project (
     [
       'warning_level=1',
       'buildtype=debugoptimized',
-      'c_std=gnu11'
+      'c_std=c17',
+      'cpp_std=c++17'
     ],
 )
 

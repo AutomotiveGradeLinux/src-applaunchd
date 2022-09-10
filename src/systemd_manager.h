@@ -1,17 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
 /*
  * Copyright (C) 2022 Konsulko Group
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 #ifndef SYSTEMDMANAGER_H
@@ -20,7 +9,6 @@
 #include <glib-object.h>
 
 #include "app_info.h"
-#include "app_launcher.h"
 
 G_BEGIN_DECLS
 
@@ -29,20 +17,23 @@ G_BEGIN_DECLS
 G_DECLARE_FINAL_TYPE(SystemdManager, systemd_manager,
                      APPLAUNCHD, SYSTEMD_MANAGER, GObject);
 
-SystemdManager *systemd_manager_new(void);
+SystemdManager *systemd_manager_get_default(void);
 
-gboolean systemd_manager_enumerate_app_units(SystemdManager *self,
-                                             AppLauncher *launcher,
-                                             GList **units);
+void systemd_manager_connect_callbacks(SystemdManager *self,
+                                       GCallback started_cb,
+                                       GCallback terminated_cb,
+                                       void *data);
 
-gboolean systemd_manager_get_app_description(SystemdManager *self,
-					     AppLauncher *launcher,
-					     gchar *service,
-					     gchar **description);
+AppInfo *systemd_manager_get_app_info(SystemdManager *self,
+                                      const gchar *app_id);
+
+GList *systemd_manager_get_app_list(SystemdManager *self);
 
 gboolean systemd_manager_start_app(SystemdManager *self,
                                    AppInfo *app_info);
 
 G_END_DECLS
+
+void systemd_manager_free_runtime_data(gpointer data);
 
 #endif
