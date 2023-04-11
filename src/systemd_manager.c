@@ -363,6 +363,15 @@ static void unit_properties_changed_cb(GDBusProxy *proxy,
             g_signal_emit(data->mgr, signals[STARTED], 0, app_info_get_app_id(app_info));
         }
     }
+    else if(!g_strcmp0(new_state, "failed"))
+    {
+        g_debug("Application %s has failed", app_info_get_app_id(app_info));
+        app_info_set_status(app_info, APP_STATUS_INACTIVE);
+        app_info_set_runtime_data(app_info, NULL);
+
+        g_signal_emit(data->mgr, signals[TERMINATED], 0, app_info_get_app_id(app_info));
+        systemd_manager_free_runtime_data(data);
+    }
     g_free(new_state);
 }
 
