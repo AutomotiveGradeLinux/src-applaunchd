@@ -37,8 +37,6 @@ prefix = get_option('prefix')
 datadir = get_option('datadir')
 sysconfdir = get_option('sysconfdir')
 bindir = join_paths(prefix, get_option('bindir'))
-ifacedir = join_paths(prefix, join_paths(datadir, 'dbus-1', 'interfaces'))
-servicedir = join_paths(prefix, join_paths(datadir, 'dbus-1', 'services'))
 
 if datadir.startswith('/')
   full_datadir = datadir
@@ -62,5 +60,4 @@ config_h = configure_file (
     configuration: config_data
 )
 
-subdir('data')
 subdir('src')

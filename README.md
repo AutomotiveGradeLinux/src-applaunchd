@@ -2,10 +2,7 @@ AGL Application Launcher service reference implementation
 
 `applaunchd` is a simple service for launching applications from other
 applications.  It exposes a gRPC RPC interface as described in the file
-`protos/applauncher.proto`.  Additionally, there is a now deprecated
-`applaunchd-dbus`, which exposes a comparable version of the interface
-named 'org.automotivelinux.AppLaunch' on the D-Bus session bus and can
-be autostarted by using this interface name.
+`protos/applauncher.proto`.
 
 The interface can be used to:
 - retrieve a list of available applications

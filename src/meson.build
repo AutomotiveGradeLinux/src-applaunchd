@@ -17,12 +17,6 @@
 cpp = meson.get_compiler('cpp')
 grpcpp_reflection_dep = cpp.find_library('grpc++_reflection')
 
-applaunchd_dbus_deps = [
-    dependency('gobject-2.0'),
-    dependency('gio-unix-2.0'),
-    dependency('libsystemd'),
-]
-
 applaunchd_deps = [
     dependency('gobject-2.0'),
     dependency('gio-unix-2.0'),
@@ -52,28 +46,9 @@ grpc_gen = generator(protoc, \
 generated_grpc_sources = grpc_gen.process('../protos/applauncher.proto')
 
 executable (
-    'applaunchd-dbus',
-    config_h,
-    [
-        generated_dbus_sources,
-        'main.c',
-        'app_info.c', 'app_info.h',
-        'app_launcher.c', 'app_launcher.h',
-        'systemd_manager.c', 'systemd_manager.h',
-        'gdbus/systemd1_manager_interface.c',
-        'gdbus/systemd1_unit_interface.c',
-        'utils.c', 'utils.h',
-    ],
-    dependencies : applaunchd_dbus_deps,
-    include_directories : include_directories('.', 'gdbus'),
-    install : true
-)
-
-executable (
     'applaunchd',
     config_h,
     [
-        generated_dbus_sources,
         generated_protoc_sources,
         generated_grpc_sources,
         'main-grpc.cc',
