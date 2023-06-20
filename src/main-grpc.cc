@@ -7,6 +7,7 @@
 #include <chrono>
 #include <glib.h>
 #include <glib-unix.h>
+#include <systemd/sd-daemon.h>
 
 #include "systemd_manager.h"
 #include "AppLauncherImpl.h"
@@ -27,9 +28,9 @@ static gboolean quit_cb(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
-void RunGrpcServer(std::shared_ptr<Server> &server)
+void WaitGrpcServer(std::shared_ptr<Server> &server)
 {
-    // Start server and wait for shutdown
+    // Wait for shutdown
     server->Wait();
 }
 
@@ -58,12 +59,14 @@ int main(int argc, char *argv[])
         exit(1);
     }
     std::cout << "Server listening on " << server_address << std::endl;
+    sd_notify(0, "READY=1");
 
     g_unix_signal_add(SIGTERM, quit_cb, (gpointer) &server);
     g_unix_signal_add(SIGINT, quit_cb, (gpointer) &server);
 
-    // Start gRPC API server on its own thread
-    std::thread grpc_thread(RunGrpcServer, std::ref(server));
+    // Wait on gRPC API server in another thread to keep that
+    // separate from the glib loop.
+    std::thread grpc_thread(WaitGrpcServer, std::ref(server));
 
     g_main_loop_run(main_loop);
 
